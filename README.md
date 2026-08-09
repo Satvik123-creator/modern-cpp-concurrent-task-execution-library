@@ -1,6 +1,6 @@
 # Concurrent Task Execution Library
 
-**A reusable C++20 library for auto-scaling thread pools, priority scheduling, and concurrent task management.**
+**A reusable C++20 library for concurrent task execution featuring thread pools, task scheduling, futures, metrics, and asynchronous logging.**
 
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg?style=flat&logo=c%2B%2B)](https://en.cppreference.com/w/cpp/20)
 [![CMake](https://img.shields.io/badge/CMake-3.20+-064F8C.svg?style=flat&logo=cmake)](https://cmake.org/)
