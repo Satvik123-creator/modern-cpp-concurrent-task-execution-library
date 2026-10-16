@@ -2,26 +2,29 @@
 #include "ctee/core/task.h"
 #include "ctee/core/thread_pool.h"
 
+using namespace std;
+namespace ch = std::chrono;
+
 namespace ctee {
 
 Scheduler::Scheduler(ThreadPool& pool)
     : pool_(pool), running_(true), paused_(false) {
-    timer_thread_ = std::jthread([this](std::stop_token token) { timer_loop(token); });
+    timer_thread_ = jthread([this](stop_token token) { timer_loop(token); });
 }
 
 Scheduler::~Scheduler() {
     shutdown();
 }
 
-std::string Scheduler::schedule_now(Task task) {
-    std::string id = task.id();
-    [[maybe_unused]] auto fut = pool_.submit(std::move(task));
+string Scheduler::schedule_now(Task task) {
+    string id = task.id();
+    [[maybe_unused]] auto fut = pool_.submit(move(task));
     return id;
 }
 
-std::string Scheduler::schedule(Task task, std::chrono::steady_clock::time_point when) {
-    std::lock_guard lock(mutex_);
-    std::string id = task.id();
+string Scheduler::schedule(Task task, ch::steady_clock::time_point when) {
+    lock_guard lock(mutex_);
+    string id = task.id();
     ScheduledEntry entry;
     entry.id = id;
     entry.name = task.name();
@@ -29,47 +32,47 @@ std::string Scheduler::schedule(Task task, std::chrono::steady_clock::time_point
     entry.func = task.func();
     entry.next_execution = when;
     entry.is_recurring = false;
-    schedule_heap_.push_back(std::move(entry));
-    std::push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
+    schedule_heap_.push_back(move(entry));
+    push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
     cv_.notify_one();
     return id;
 }
 
-std::string Scheduler::schedule_recurring(Task task, std::chrono::milliseconds interval,
-                                          std::size_t max_repeats) {
-    std::lock_guard lock(mutex_);
-    std::string id = task.id();
+string Scheduler::schedule_recurring(Task task, ch::milliseconds interval,
+                                     size_t max_repeats) {
+    lock_guard lock(mutex_);
+    string id = task.id();
     ScheduledEntry entry;
     entry.id = id;
     entry.name = task.name();
     entry.priority = task.priority();
     entry.func = task.func();
-    entry.next_execution = std::chrono::steady_clock::now() + interval;
+    entry.next_execution = ch::steady_clock::now() + interval;
     entry.interval = interval;
     entry.max_repeats = max_repeats;
     entry.repeat_count = 0;
     entry.is_recurring = true;
-    schedule_heap_.push_back(std::move(entry));
-    std::push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
+    schedule_heap_.push_back(move(entry));
+    push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
     cv_.notify_one();
     return id;
 }
 
-bool Scheduler::cancel(const std::string& task_id) {
-    std::lock_guard lock(mutex_);
+bool Scheduler::cancel(const string& task_id) {
+    lock_guard lock(mutex_);
     cancelled_ids_.insert(task_id);
     pool_.cancel(task_id);
     cv_.notify_one();
     return true;
 }
 
-bool Scheduler::reschedule(const std::string& task_id,
-                           std::chrono::steady_clock::time_point new_time) {
-    std::lock_guard lock(mutex_);
+bool Scheduler::reschedule(const string& task_id,
+                           ch::steady_clock::time_point new_time) {
+    lock_guard lock(mutex_);
     for (auto& entry : schedule_heap_) {
         if (entry.id == task_id) {
             entry.next_execution = new_time;
-            std::make_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
+            make_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
             cv_.notify_one();
             return true;
         }
@@ -78,19 +81,19 @@ bool Scheduler::reschedule(const std::string& task_id,
 }
 
 void Scheduler::pause() {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     paused_ = true;
 }
 
 void Scheduler::resume() {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     paused_ = false;
     cv_.notify_all();
 }
 
 void Scheduler::shutdown() {
     {
-        std::lock_guard lock(mutex_);
+        lock_guard lock(mutex_);
         if (!running_) return;
         running_ = false;
     }
@@ -101,23 +104,23 @@ void Scheduler::shutdown() {
 }
 
 bool Scheduler::is_running() const noexcept {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     return running_;
 }
 
 bool Scheduler::is_paused() const noexcept {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     return paused_;
 }
 
-std::size_t Scheduler::scheduled_count() const noexcept {
-    std::lock_guard lock(mutex_);
+size_t Scheduler::scheduled_count() const noexcept {
+    lock_guard lock(mutex_);
     return schedule_heap_.size();
 }
 
-void Scheduler::timer_loop(std::stop_token stop_token) {
+void Scheduler::timer_loop(stop_token stop_token) {
     while (!stop_token.stop_requested()) {
-        std::unique_lock lock(mutex_);
+        unique_lock lock(mutex_);
 
         cv_.wait(lock, stop_token, [&] {
             return !schedule_heap_.empty() || !running_;
@@ -144,11 +147,11 @@ void Scheduler::timer_loop(std::stop_token stop_token) {
         if (!running_) break;
         if (schedule_heap_.empty()) continue;
 
-        auto now = std::chrono::steady_clock::now();
+        auto now = ch::steady_clock::now();
         if (schedule_heap_.front().next_execution > now) continue;
 
-        std::pop_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
-        ScheduledEntry entry = std::move(schedule_heap_.back());
+        pop_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
+        ScheduledEntry entry = move(schedule_heap_.back());
         schedule_heap_.pop_back();
 
         if (cancelled_ids_.count(entry.id)) {
@@ -159,8 +162,8 @@ void Scheduler::timer_loop(std::stop_token stop_token) {
         bool should_reschedule = entry.is_recurring &&
             (entry.max_repeats == 0 || entry.repeat_count + 1 < entry.max_repeats);
 
-        std::string entry_id = entry.id;
-        std::string entry_name = entry.name;
+        string entry_id = entry.id;
+        string entry_name = entry.name;
         TaskPriority entry_priority = entry.priority;
         auto entry_func = entry.func;
         bool entry_is_recurring = entry.is_recurring;
@@ -172,12 +175,12 @@ void Scheduler::timer_loop(std::stop_token stop_token) {
 
         if (!paused_) {
             Task t(entry_func, entry_name, entry_priority);
-            [[maybe_unused]] auto fut = pool_.submit(std::move(t));
+            [[maybe_unused]] auto fut = pool_.submit(move(t));
         } else {
             lock.lock();
-            entry.next_execution = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
-            schedule_heap_.push_back(std::move(entry));
-            std::push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
+            entry.next_execution = ch::steady_clock::now() + ch::milliseconds(10);
+            schedule_heap_.push_back(move(entry));
+            push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
             lock.unlock();
             continue;
         }
@@ -193,9 +196,9 @@ void Scheduler::timer_loop(std::stop_token stop_token) {
             next.interval = entry_interval;
             next.max_repeats = entry_max_repeats;
             next.repeat_count = entry_repeat_count + 1;
-            next.next_execution = std::chrono::steady_clock::now() + entry_interval;
-            schedule_heap_.push_back(std::move(next));
-            std::push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
+            next.next_execution = ch::steady_clock::now() + entry_interval;
+            schedule_heap_.push_back(move(next));
+            push_heap(schedule_heap_.begin(), schedule_heap_.end(), CompareByTime{});
             lock.unlock();
         }
     }

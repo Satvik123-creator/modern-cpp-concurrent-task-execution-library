@@ -2,6 +2,9 @@
 
 #include <stdexcept>
 
+using namespace std;
+namespace ch = std::chrono;
+
 namespace ctee {
 
 ThreadPool::ThreadPool(const ThreadPoolConfig& config)
@@ -9,10 +12,10 @@ ThreadPool::ThreadPool(const ThreadPoolConfig& config)
       queue_(config.max_queue_size),
       running_(true),
       paused_(false),
-      metrics_(std::make_shared<Metrics>()),
-      history_(std::make_shared<TaskHistory>()) {
+      metrics_(make_shared<Metrics>()),
+      history_(make_shared<TaskHistory>()) {
     workers_.reserve(config_.min_threads);
-    for (std::size_t i = 0; i < config_.min_threads; ++i) {
+    for (size_t i = 0; i < config_.min_threads; ++i) {
         add_worker();
     }
 }
@@ -21,39 +24,39 @@ ThreadPool::~ThreadPool() {
     shutdown();
 }
 
-std::future<void> ThreadPool::submit(Task task) {
-    auto promise = std::make_shared<std::promise<void>>();
+future<void> ThreadPool::submit(Task task) {
+    auto promise = make_shared<std::promise<void>>();
     auto future = promise->get_future();
 
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
 
     reap_stopped_workers();
 
     if (!running_) {
         try {
-            throw std::runtime_error("ThreadPool is shut down");
+            throw runtime_error("ThreadPool is shut down");
         } catch (...) {
-            promise->set_exception(std::current_exception());
+            promise->set_exception(current_exception());
         }
         return future;
     }
 
     if (queue_.is_full()) {
         try {
-            throw std::runtime_error("Task queue is full");
+            throw runtime_error("Task queue is full");
         } catch (...) {
-            promise->set_exception(std::current_exception());
+            promise->set_exception(current_exception());
         }
         return future;
     }
 
-    std::string id = task.id();
+    string id = task.id();
     void_promises_[id] = promise;
     cancel_handlers_[id] = [promise]() {
         try {
-            throw std::runtime_error("Task was cancelled");
+            throw runtime_error("Task was cancelled");
         } catch (...) {
-            promise->set_exception(std::current_exception());
+            promise->set_exception(current_exception());
         }
     };
 
@@ -67,13 +70,13 @@ std::future<void> ThreadPool::submit(Task task) {
         info.retry_delay = task.retry_delay();
         info.timeout_ms = task.timeout_ms();
         info.depends_on = task.depends_on();
-        retry_info_[id] = std::move(info);
+        retry_info_[id] = move(info);
     }
 
     history_->record_submit(id, task.name(), task.created_at());
 
     task.set_status(TaskStatus::Queued);
-    queue_.push(std::move(task));
+    queue_.push(move(task));
     cv_.notify_one();
 
     metrics_->record_submit();
@@ -87,8 +90,8 @@ std::future<void> ThreadPool::submit(Task task) {
     return future;
 }
 
-bool ThreadPool::cancel(const std::string& task_id) {
-    std::lock_guard lock(mutex_);
+bool ThreadPool::cancel(const string& task_id) {
+    lock_guard lock(mutex_);
     queue_.cancel(task_id);
 
     auto it = cancel_handlers_.find(task_id);
@@ -103,26 +106,26 @@ bool ThreadPool::cancel(const std::string& task_id) {
     return false;
 }
 
-void ThreadPool::set_completion_handler(const std::string& task_id,
-                                        std::function<void(TaskStatus)> handler) {
-    std::lock_guard lock(mutex_);
-    completion_callbacks_[task_id] = std::move(handler);
+void ThreadPool::set_completion_handler(const string& task_id,
+                                        function<void(TaskStatus)> handler) {
+    lock_guard lock(mutex_);
+    completion_callbacks_[task_id] = move(handler);
 }
 
 void ThreadPool::pause() {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     paused_ = true;
 }
 
 void ThreadPool::resume() {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     paused_ = false;
     cv_.notify_all();
 }
 
 void ThreadPool::shutdown() {
     {
-        std::lock_guard lock(mutex_);
+        lock_guard lock(mutex_);
         if (!running_) return;
         running_ = false;
         paused_ = false;
@@ -138,7 +141,7 @@ void ThreadPool::shutdown() {
 }
 
 ThreadPoolStats ThreadPool::stats() const {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     ThreadPoolStats s;
     s.active_threads = workers_.size();
     s.pending_tasks = queue_.size();
@@ -154,33 +157,33 @@ ThreadPoolStats ThreadPool::stats() const {
     s.avg_exec_time_ms = snap.avg_exec_time_ms;
     s.worker_utilization = snap.worker_utilization;
     s.tasks_per_sec = snap.tasks_per_sec;
-    auto wall = std::chrono::steady_clock::now() - snap.timestamp;
-    s.uptime_seconds = std::chrono::duration<double>(wall).count();
+    auto wall = ch::steady_clock::now() - snap.timestamp;
+    s.uptime_seconds = ch::duration<double>(wall).count();
     return s;
 }
 
 bool ThreadPool::is_running() const noexcept {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     return running_;
 }
 
 bool ThreadPool::is_paused() const noexcept {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     return paused_;
 }
 
-std::size_t ThreadPool::thread_count() const noexcept {
-    std::lock_guard lock(mutex_);
+size_t ThreadPool::thread_count() const noexcept {
+    lock_guard lock(mutex_);
     return workers_.size();
 }
 
-std::shared_ptr<Metrics> ThreadPool::metrics() const noexcept {
+shared_ptr<Metrics> ThreadPool::metrics() const noexcept {
     return metrics_;
 }
 
-std::vector<WorkerInfo> ThreadPool::get_worker_infos() const {
-    std::lock_guard lock(mutex_);
-    std::vector<WorkerInfo> result;
+vector<WorkerInfo> ThreadPool::get_worker_infos() const {
+    lock_guard lock(mutex_);
+    vector<WorkerInfo> result;
     result.reserve(workers_.size());
     for (const auto& w : workers_) {
         if (w) {
@@ -188,14 +191,14 @@ std::vector<WorkerInfo> ThreadPool::get_worker_infos() const {
             info.id = w->id();
             info.state = detail::Worker::state_to_string(w->state());
             info.marked_stop = w->is_marked_stop();
-            result.push_back(std::move(info));
+            result.push_back(move(info));
         }
     }
     return result;
 }
 
 QueueInfo ThreadPool::queue_info() const {
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
     QueueInfo info;
     info.size = queue_.size();
     info.capacity = config_.max_queue_size;
@@ -203,10 +206,10 @@ QueueInfo ThreadPool::queue_info() const {
     return info;
 }
 
-void ThreadPool::on_task_complete(const std::string& task_id, TaskStatus status,
-                                  std::chrono::milliseconds wait_time,
-                                  std::chrono::milliseconds exec_time) {
-    std::lock_guard lock(mutex_);
+void ThreadPool::on_task_complete(const string& task_id, TaskStatus status,
+                                  ch::milliseconds wait_time,
+                                  ch::milliseconds exec_time) {
+    lock_guard lock(mutex_);
 
     cancel_handlers_.erase(task_id);
 
@@ -235,20 +238,20 @@ void ThreadPool::on_task_complete(const std::string& task_id, TaskStatus status,
             void_promises_.erase(pit);
         } else if (status == TaskStatus::Cancelled) {
             try {
-                throw std::runtime_error("Task was cancelled");
+                throw runtime_error("Task was cancelled");
             } catch (...) {
-                pit->second->set_exception(std::current_exception());
+                pit->second->set_exception(current_exception());
             }
             void_promises_.erase(pit);
         } else {
             // Failed or TimedOut with no retries left
             try {
                 if (status == TaskStatus::TimedOut) {
-                    throw std::runtime_error("Task execution timed out");
+                    throw runtime_error("Task execution timed out");
                 }
-                throw std::runtime_error("Task execution failed");
+                throw runtime_error("Task execution failed");
             } catch (...) {
-                pit->second->set_exception(std::current_exception());
+                pit->second->set_exception(current_exception());
             }
             void_promises_.erase(pit);
         }
@@ -304,16 +307,16 @@ void ThreadPool::on_task_complete(const std::string& task_id, TaskStatus status,
 }
 
 void ThreadPool::add_worker() {
-    auto id = next_worker_id_.fetch_add(1, std::memory_order_relaxed);
-    auto worker = std::make_unique<detail::Worker>(
+    auto id = next_worker_id_.fetch_add(1, memory_order_relaxed);
+    auto worker = make_unique<detail::Worker>(
         id, mutex_, cv_, queue_, running_, paused_,
-        [this](const std::string& task_id, TaskStatus status,
-               std::chrono::milliseconds wait_time,
-               std::chrono::milliseconds exec_time) {
+        [this](const string& task_id, TaskStatus status,
+               ch::milliseconds wait_time,
+               ch::milliseconds exec_time) {
             on_task_complete(task_id, status, wait_time, exec_time);
         },
         [this]() { metrics_->record_start(); });
-    workers_.push_back(std::move(worker));
+    workers_.push_back(move(worker));
     metrics_->set_active_threads(workers_.size());
 }
 
@@ -346,15 +349,15 @@ void ThreadPool::reap_stopped_workers() {
     metrics_->set_active_threads(workers_.size());
 }
 
-std::shared_ptr<TaskHistory> ThreadPool::task_history() const noexcept {
+shared_ptr<TaskHistory> ThreadPool::task_history() const noexcept {
     return history_;
 }
 
-std::vector<std::string> ThreadPool::submit_batch(std::vector<Task> tasks) {
-    std::vector<std::string> ids;
+vector<string> ThreadPool::submit_batch(vector<Task> tasks) {
+    vector<string> ids;
     ids.reserve(tasks.size());
 
-    std::lock_guard lock(mutex_);
+    lock_guard lock(mutex_);
 
     reap_stopped_workers();
 
@@ -367,7 +370,7 @@ std::vector<std::string> ThreadPool::submit_batch(std::vector<Task> tasks) {
             break;
         }
 
-        std::string id = task.id();
+        string id = task.id();
         ids.push_back(id);
 
         // Store retry metadata
@@ -380,13 +383,13 @@ std::vector<std::string> ThreadPool::submit_batch(std::vector<Task> tasks) {
             info.retry_delay = task.retry_delay();
             info.timeout_ms = task.timeout_ms();
             info.depends_on = task.depends_on();
-            retry_info_[id] = std::move(info);
+            retry_info_[id] = move(info);
         }
 
         history_->record_submit(id, task.name(), task.created_at());
 
         task.set_status(TaskStatus::Queued);
-        queue_.push(std::move(task));
+        queue_.push(move(task));
     }
 
     if (!ids.empty()) {

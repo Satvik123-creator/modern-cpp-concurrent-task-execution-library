@@ -5,11 +5,14 @@
 #include <future>
 #include <sstream>
 
+using namespace std;
+namespace ch = std::chrono;
+
 namespace ctee::detail {
 
-Worker::Worker(std::size_t id,
-               std::mutex& mutex,
-               std::condition_variable_any& cv,
+Worker::Worker(size_t id,
+               mutex& mutex,
+               condition_variable_any& cv,
                TaskQueue& queue,
                bool& pool_running,
                bool& pool_paused,
@@ -21,9 +24,9 @@ Worker::Worker(std::size_t id,
       queue_(queue),
       pool_running_(pool_running),
       pool_paused_(pool_paused),
-      on_complete_(std::move(on_complete)),
-      on_start_(std::move(on_start)) {
-    thread_ = std::jthread([this](std::stop_token token) { run(token); });
+      on_complete_(move(on_complete)),
+      on_start_(move(on_start)) {
+    thread_ = jthread([this](stop_token token) { run(token); });
 }
 
 Worker::~Worker() {
@@ -64,26 +67,26 @@ const char* Worker::state_to_string(State state) noexcept {
     return "unknown";
 }
 
-void Worker::run(std::stop_token stop_token) {
+void Worker::run(stop_token stop_token) {
     // Name this thread for debuggers/profilers (e.g. "ctee-w0", "ctee-w1").
     {
-        std::ostringstream oss;
+        ostringstream oss;
         oss << "ctee-w" << id_;
         ctee::common::set_thread_name(oss.str());
     }
 
-    state_.store(State::Waiting, std::memory_order_release);
+    state_.store(State::Waiting, memory_order_release);
 
     while (true) {
-        std::optional<Task> task_opt;
+        optional<Task> task_opt;
 
         {
-            std::unique_lock lock(mutex_);
+            unique_lock lock(mutex_);
 
             cv_.wait(lock, stop_token, [this] {
                 return (!queue_.empty() && !pool_paused_)
                     || !pool_running_
-                    || should_stop_.load(std::memory_order_acquire);
+                    || should_stop_.load(memory_order_acquire);
             });
 
             if (!pool_running_ && queue_.empty()) {
@@ -94,7 +97,7 @@ void Worker::run(std::stop_token stop_token) {
                 break;
             }
 
-            if (should_stop_.load(std::memory_order_acquire) && queue_.empty()) {
+            if (should_stop_.load(memory_order_acquire) && queue_.empty()) {
                 break;
             }
 
@@ -109,9 +112,9 @@ void Worker::run(std::stop_token stop_token) {
             continue;
         }
 
-        state_.store(State::Running, std::memory_order_release);
-        auto start_time = std::chrono::steady_clock::now();
-        auto wait_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+        state_.store(State::Running, memory_order_release);
+        auto start_time = ch::steady_clock::now();
+        auto wait_time = ch::duration_cast<ch::milliseconds>(
             start_time - task_opt->created_at());
         if (on_start_) on_start_();
 
@@ -134,19 +137,19 @@ void Worker::run(std::stop_token stop_token) {
         // On timeout, we do NOT read the task's fields (the detached thread
         // may be modifying them concurrently).  We just report TimedOut.
         if (task_opt->timeout_ms().count() > 0) {
-            auto task_ptr = std::make_shared<Task>(std::move(*task_opt));
+            auto task_ptr = make_shared<Task>(move(*task_opt));
 
-            std::shared_future<void> done;
+            shared_future<void> done;
             {
-                std::promise<void> p;
+                promise<void> p;
                 done = p.get_future().share();
-                std::thread([task_ptr, promise = std::move(p)]() mutable {
+                thread([task_ptr, promise = move(p)]() mutable {
                     task_ptr->execute();
                     promise.set_value();
                 }).detach();
             }
 
-            if (done.wait_for(task_ptr->timeout_ms()) == std::future_status::ready) {
+            if (done.wait_for(task_ptr->timeout_ms()) == future_status::ready) {
                 // Completed within timeout — safe to read because of
                 // happens-before: execute() → set_value() → ready.
                 if (on_complete_) {
@@ -162,7 +165,7 @@ void Worker::run(std::stop_token stop_token) {
                 }
             }
 
-            state_.store(State::Waiting, std::memory_order_release);
+            state_.store(State::Waiting, memory_order_release);
             continue;
         }
 
@@ -174,10 +177,10 @@ void Worker::run(std::stop_token stop_token) {
             on_complete_(task_opt->id(), task_opt->status(), wait_time, exec_time);
         }
 
-        state_.store(State::Waiting, std::memory_order_release);
+        state_.store(State::Waiting, memory_order_release);
     }
 
-    state_.store(State::Stopped, std::memory_order_release);
+    state_.store(State::Stopped, memory_order_release);
 }
 
 }  // namespace ctee::detail
