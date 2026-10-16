@@ -582,6 +582,9 @@ public:
 ```cpp
 #include "ctee/core/thread_pool.h"
 
+using namespace std;
+namespace ch = std::chrono;
+
 ctee::ThreadPoolConfig config;
 config.min_threads = 4;
 config.max_threads = 16;
@@ -594,6 +597,8 @@ ctee::ThreadPool pool(config);
 ### Submitting Tasks
 
 ```cpp
+using namespace std;
+
 // Lambda with automatic type deduction
 auto future = pool.submit([]() { return 42; });
 int result = future.get();  // 42
@@ -603,48 +608,54 @@ auto f2 = pool.submit([](int a, int b) { return a + b; }, 3, 4);
 int sum = f2.get();  // 7
 
 // Void lambda
-auto f3 = pool.submit([]() { std::cout << "done\n"; });
+auto f3 = pool.submit([]() { cout << "done\n"; });
 f3.get();
 
 // std::packaged_task
-std::packaged_task<int()> pt([]() { return 100; });
-auto f4 = pool.submit(std::move(pt));
+packaged_task<int()> pt([]() { return 100; });
+auto f4 = pool.submit(move(pt));
 int val = f4.get();  // 100
 ```
 
 ### Submitting a Task Object (with retry, dependencies, timeout)
 
 ```cpp
+using namespace std;
+namespace ch = std::chrono;
+
 ctee::Task task([]() {
     // This might fail and be retried
-    if (rand() % 2) throw std::runtime_error("transient failure");
+    if (rand() % 2) throw runtime_error("transient failure");
 }, "important_job", ctee::TaskPriority::High);
 
 task.set_max_retries(3);
-task.set_retry_delay(std::chrono::milliseconds(500));
-task.set_timeout(std::chrono::seconds(30));
+task.set_retry_delay(ch::milliseconds(500));
+task.set_timeout(ch::seconds(30));
 task.set_depends_on({"setup_task_id"});
 
-auto future = pool.submit(std::move(task));
+auto future = pool.submit(move(task));
 future.get();
 ```
 
 ### Scheduling Delayed and Recurring Tasks
 
 ```cpp
+using namespace std;
+namespace ch = std::chrono;
+
 ctee::Scheduler scheduler(pool);
 
 // Execute immediately
 scheduler.schedule_now(ctee::Task([]() { /* ... */ }, "immediate"));
 
 // Execute after 5 seconds
-auto when = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+auto when = ch::steady_clock::now() + ch::seconds(5);
 scheduler.schedule(ctee::Task([]() { /* ... */ }, "delayed"), when);
 
 // Execute every 10 seconds (up to 5 times)
 scheduler.schedule_recurring(
     ctee::Task([]() { /* ... */ }, "heartbeat"),
-    std::chrono::seconds(10),
+    ch::seconds(10),
     5  // max_repeats (0 = unlimited)
 );
 
@@ -655,25 +666,29 @@ scheduler.shutdown();
 ### Cancellation
 
 ```cpp
+using namespace std;
+
 auto future = pool.submit([]() {
-    std::this_thread::sleep_for(std::chrono::seconds(60));
+    this_thread::sleep_for(chrono::seconds(60));
     return "done";
 });
 
 bool cancelled = pool.cancel(task_id);
 // cancelled == true if the task was pending
 // cancelled == false if already running or not found
-// future.get() will throw std::runtime_error("Task was cancelled")
+// future.get() will throw runtime_error("Task was cancelled")
 ```
 
 ### Checking Metrics
 
 ```cpp
+using namespace std;
+
 auto snap = pool.metrics()->snapshot();
-std::cout << "Completed: " << snap.completed_tasks << "\n";
-std::cout << "Queue length: " << snap.queue_length << "\n";
-std::cout << "Avg exec time: " << snap.avg_exec_time_ms << " ms\n";
-std::cout << "Utilization: " << snap.worker_utilization * 100 << "%\n";
+cout << "Completed: " << snap.completed_tasks << "\n";
+cout << "Queue length: " << snap.queue_length << "\n";
+cout << "Avg exec time: " << snap.avg_exec_time_ms << " ms\n";
+cout << "Utilization: " << snap.worker_utilization * 100 << "%\n";
 
 // Access time-series history (for charting)
 auto history = pool.metrics()->history();
@@ -1196,6 +1211,7 @@ These are realistic production-grade extensions of the current implementation:
 - All public API methods marked `[[nodiscard]]` where applicable
 - RAII for all resource management
 - Single mutex per component (no fine-grained locking)
+- `using namespace std` and `namespace ch = std::chrono` in `.cpp` files only (never in headers)
 
 ---
 
